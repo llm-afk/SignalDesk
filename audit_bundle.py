@@ -2,6 +2,31 @@
 from pathlib import Path
 import os
 import pefile
+import types
+from PyInstaller.archive.readers import CArchiveReader
+
+
+def code_signature(code):
+    return (code.co_code, code.co_names, code.co_varnames, code.co_freevars,
+            code.co_cellvars, code.co_argcount, code.co_posonlyargcount,
+            code.co_kwonlyargcount, code.co_flags,
+            tuple(code_signature(c) if isinstance(c, types.CodeType) else c
+                  for c in code.co_consts))
+
+
+def check_source(root, source):
+    archive = CArchiveReader(str(root / 'SignalDesk.exe')).open_embedded_archive('PYZ.pyz')
+    checked = 0
+    for path in sorted((source / 'signaldesk').glob('*.py')):
+        name = 'signaldesk' if path.stem == '__init__' else 'signaldesk.' + path.stem
+        expected = compile(path.read_bytes(), str(path), 'exec', optimize=0)
+        if name not in archive.toc:
+            raise RuntimeError(f'Packaged module missing: {name}')
+        actual = archive.extract(name)
+        if actual is None or code_signature(expected) != code_signature(actual):
+            raise RuntimeError(f'Packaged module differs from current source: {name}')
+        checked += 1
+    print(f'Executable source audit passed: {checked} embedded modules match current source.')
 
 
 def check_bundle(root):
@@ -24,4 +49,6 @@ def check_bundle(root):
 
 
 if __name__ == '__main__':
-    check_bundle(Path(__file__).parent / 'dist' / 'SignalDesk')
+    project = Path(__file__).parent
+    check_bundle(project / 'dist' / 'SignalDesk')
+    check_source(project / 'dist' / 'SignalDesk', project / 'src')
